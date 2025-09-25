@@ -26,26 +26,33 @@ function generateAccessToken(user) {
  * Generate refresh token (long-lived, 7 days)
  * Used to get new access tokens
  */
-async function generateRefreshToken(user) {
+async function generateRefreshToken(user,  rememberMe = false) {
+    const expiresIn = rememberMe ? '30d' : '7d';
     const token = jwt.sign(
         {
             id: user.id,
-            type: 'refresh'
+            type: 'refresh',
+            persistent: rememberMe,
         },
         process.env.JWT_REFRESH_SECRET,
         {
-            expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d'
+            expiresIn: expiresIn
         }
     );
     // Store in database for validation
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
+    if(rememberMe){
+        expiresAt.setDate(expiresAt.getDate() + 30);
+    } else {
+        expiresAt.setDate(expiresAt.getDate() + 7);
+    }
+
     await runQuery(
-        `INSERT INTO refresh_tokens (token, user_id, expires_at)
-         VALUES (?, ?, ?)`,
-        [token, user.id, expiresAt.toISOString()]
+        `INSERT INTO refresh_tokens (token, user_id, expires_at, is_persistent)
+         VALUES (?, ?, ?, ?)`,
+        [token, user.id, expiresAt.toISOString(), rememberMe ? 1 : 0]
     );
-    return token;
+    return {token, rememberMe};
 }
 /**
  * Verify access token

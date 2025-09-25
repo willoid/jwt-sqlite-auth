@@ -1,12 +1,27 @@
 import { useState } from 'react';
 import { login } from '../api/auth';
+import ForgotPassword from './ForgotPassword';
+
+
+
+
 function Login({ onSuccess }) {
+    const [rememberMe, setRememberMe] = useState(false);
     const [formData, setFormData] = useState({
         email: '',
         password: ''
     });
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [showForgotPassword, setShowForgotPassword] = useState(false);
+
+    if (showForgotPassword) {
+        return (
+            <ForgotPassword
+                onBack={() => setShowForgotPassword(false)}
+            />
+        );
+    }
     const handleChange = (e) => {
         setFormData({
             ...formData,
@@ -18,7 +33,7 @@ function Login({ onSuccess }) {
         setError('');
         setLoading(true);
         try {
-            const response = await login(formData.email, formData.password);
+            const response = await login(formData.email, formData.password, formData.rememberMe);
             console.log('Login successful:', response);
             onSuccess(response.user);
         } catch (err) {
@@ -56,12 +71,41 @@ function Login({ onSuccess }) {
                         placeholder="Your password"
                     />
                 </div>
+                <div className="form-group checkbox-group">
+                    <input
+                        type="checkbox"
+                        id="rememberMe"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        style={{width:"auto"}}
+                    />
+                    <label htmlFor="rememberMe" style={{marginBottom:0, cursor:"pointer"}}>Remember Me for 30 days</label>
+                </div>
                 <button
                     type="submit"
                     disabled={loading}
                     className="submit-btn"
                 >
                     {loading ? 'Logging in...' : 'Login'}
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setShowForgotPassword(true)}
+                    style={{
+                        width: '100%',
+                        marginTop: '1rem',
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#6366f1',
+                        cursor: 'pointer',
+                        fontSize: '0.9rem',
+                        padding: '0.5rem',
+                        transition: 'all 0.3s'
+                    }}
+                    onMouseEnter={(e) => e.target.style.textDecoration = 'underline'}
+                    onMouseLeave={(e) => e.target.style.textDecoration = 'none'}
+                >
+                    Forgot your password?
                 </button>
             </form>
             <div className="demo-credentials">

@@ -38,3 +38,14 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_blacklisted_tokens_token ON blacklisted_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+                                               id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                               user_id INTEGER NOT NULL,
+                                               reset_code TEXT NOT NULL,-- Stores BCrypt hashed code (never plain text)
+                                               expires_at DATETIME NOT NULL,-- Hard expiry for security
+                                               used BOOLEAN DEFAULT 0,-- Prevents code reuse
+                                               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                               FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+CREATE INDEX IF NOT EXISTS idx_password_resets_user_id ON password_resets(user_id);
