@@ -60,9 +60,9 @@ router.post('/register', async (req, res) => {
         };
         // Generate tokens
         const accessToken = generateAccessToken(user);
-        const refreshToken = await generateRefreshToken(user);
+        const refreshData = await generateRefreshToken(user,false);
         // Set refresh token as httpOnly cookie (secure in production)
-        res.cookie('refreshToken', refreshToken, {
+        res.cookie('refreshToken', refreshData.token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'strict',
@@ -86,7 +86,8 @@ router.post('/register', async (req, res) => {
  */
 router.post('/login', async (req, res) => {
     try {
-        const {email, password} = req.body;
+        const {email, password, rememberMe} = req.body;
+        console.log('Remember Me value:', rememberMe)
         // Validation
         if (!email || !password) {
             return res.status(400).json({
@@ -297,7 +298,7 @@ router.post('/forgot-password', async (req, res) => {
         const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
 
 // Hash the code with BCrypt (same as passwords)// This ensures even database access doesn't reveal codes
-        /const hashedCode = await bcrypt.hash(resetCode, 10);
+        const hashedCode = await bcrypt.hash(resetCode, 10);
 
 // Set expiry to 15 minutes from now
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
