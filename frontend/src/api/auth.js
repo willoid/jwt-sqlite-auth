@@ -138,4 +138,26 @@ axios.interceptors.response.use(
         return Promise.reject(error);
     }
 );
+
+/**
+ * Force refresh user data
+ */
+export async function forceRefreshUser() {
+    try {
+        // Clear any cached token
+        accessToken = null;
+
+        // Get fresh token
+        const refreshResponse = await refreshToken();
+
+        // Get fresh user data
+        const userResponse = await getCurrentUser();
+
+        return userResponse;
+    } catch (error) {
+        throw error;
+    }
+}
+
+
 export {accessToken};

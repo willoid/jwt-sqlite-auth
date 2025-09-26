@@ -160,25 +160,37 @@ async function verifyEmailToken(token) {
     const verification = await getQuery(
         `SELECT ev.*, u.email, u.username
          FROM email_verifications ev
-         JOIN users u ON ev.user_id = u.id
+                  JOIN users u ON ev.user_id = u.id
          WHERE ev.token = ? AND ev.expires_at > datetime('now')`,
         [token]
     );
+
     if (!verification) {
         throw new Error('Invalid or expired verification token');
     }
-    // Mark user as verified
+
+    // Mark user as verified - ensure we're setting it to 1 (true)
     await runQuery(
         `UPDATE users
          SET email_verified = 1, verified_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         [verification.user_id]
     );
+
+    // Verify the update worked
+    const updatedUser = await getQuery(
+        `SELECT id, email_verified FROM users WHERE id = ?`,
+        [verification.user_id]
+    );
+
+    console.log('User after verification:', updatedUser);
+
     // Delete used token
     await runQuery(
         `DELETE FROM email_verifications WHERE token = ?`,
         [token]
     );
+
     return verification;
 }
 

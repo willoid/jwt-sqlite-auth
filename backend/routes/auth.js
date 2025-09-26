@@ -15,10 +15,7 @@ const {
 const {authenticateToken, authenticateRefreshToken} = require('../middleware/auth');
 const emailService = require('../services/emailService');
 const { createEmailVerificationToken, verifyEmailToken } = require('../utils/tokens');
-/**
- * POST /auth/register
- * Create new user account
- */
+
 /**
  * POST /auth/register
  * Create new user account with email verification
@@ -104,9 +101,13 @@ router.post('/login', async (req, res) => {
                 error: 'Email and password required'
             });
         }
-        // Find user
+        // Find user with email_verified field
         const user = await getQuery(
-            `SELECT *
+            `SELECT id, email, username, password_hash,
+                    CASE
+                        WHEN email_verified IS NULL THEN 0
+                        ELSE email_verified
+                        END as email_verified
              FROM users
              WHERE email = ?`,
             [email]
@@ -149,7 +150,8 @@ router.post('/login', async (req, res) => {
             user: {
                 id: user.id,
                 email: user.email,
-                username: user.username
+                username: user.username,
+                email_verified: Boolean(user.email_verified)
             }
         });
     } catch (error) {
@@ -166,22 +168,34 @@ router.post('/login', async (req, res) => {
 router.post('/refresh', authenticateRefreshToken, async (req, res) => {
     try {
         const {refreshToken} = req;
+
         // Verify refresh token
         const decoded = await verifyRefreshToken(refreshToken);
-        // Get user data
+
+        // Get user data with email_verified field
         const user = await getQuery(
-            `SELECT id, email, username
+            `SELECT id, email, username,
+                    CASE
+                        WHEN email_verified IS NULL THEN 0
+                        ELSE email_verified
+                        END as email_verified
              FROM users
              WHERE id = ?`,
             [decoded.id]
         );
+
         if (!user) {
             return res.status(404).json({
                 error: 'User not found'
             });
         }
+
+        // Convert to boolean
+        user.email_verified = Boolean(user.email_verified);
+
         // Generate new access token
         const accessToken = generateAccessToken(user);
+
         res.json({
             accessToken,
             user
@@ -211,32 +225,6 @@ router.post('/logout', authenticateRefreshToken, async (req, res) => {
         console.error('Logout error:', error);
         res.status(500).json({
             error: 'Failed to logout'
-        });
-    }
-});
-/**
- * GET /auth/me
- * Get current user info (protected route example)
- */
-router.get('/me', authenticateToken, async (req, res) => {
-    try {
-        // req.user is set by authenticateToken middleware
-        const user = await getQuery(
-            `SELECT id, email, username, created_at
-             FROM users
-             WHERE id = ?`,
-            [req.user.id]
-        );
-        if (!user) {
-            return res.status(404).json({
-                error: 'User not found'
-            });
-        }
-        res.json(user);
-    } catch (error) {
-        console.error('Get user error:', error);
-        res.status(500).json({
-            error: 'Failed to get user info'
         });
     }
 });
@@ -608,18 +596,39 @@ router.get('/verification-status', authenticateToken, async (req, res) => {
     }
 });
 
+/**
+* GET /auth/me
+* Get current user info (protected route example)
+*/
 router.get('/me', authenticateToken, async (req, res) => {
     try {
+        // req.user is set by authenticateToken middleware
         const user = await getQuery(
-            `SELECT id, email, username, created_at, email_verified, verified_at
-             FROM users WHERE id = ?`,
+            `SELECT 
+                id, 
+                email, 
+                username, 
+                created_at,
+                CASE
+                    WHEN email_verified IS NULL THEN 0
+                    ELSE email_verified
+                    END as email_verified
+             FROM users 
+             WHERE id = ?`,
             [req.user.id]
         );
+
         if (!user) {
             return res.status(404).json({
                 error: 'User not found'
             });
         }
+
+        // Convert to boolean for consistency
+        user.email_verified = Boolean(user.email_verified);
+
+        console.log('Sending user data:', user); // Debug log
+
         res.json(user);
     } catch (error) {
         console.error('Get user error:', error);
