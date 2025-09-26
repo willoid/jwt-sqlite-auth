@@ -13,9 +13,15 @@ const {
     revokeRefreshToken
 } = require('../utils/tokens');
 const {authenticateToken, authenticateRefreshToken} = require('../middleware/auth');
+const emailService = require('../services/emailService');
+const { createEmailVerificationToken, verifyEmailToken } = require('../utils/tokens');
 /**
  * POST /auth/register
  * Create new user account
+ */
+/**
+ * POST /auth/register
+ * Create new user account with email verification
  */
 router.post('/register', async (req, res) => {
     try {
@@ -33,10 +39,7 @@ router.post('/register', async (req, res) => {
         }
         // Check if user exists
         const existingUser = await getQuery(
-            `SELECT id
-             FROM users
-             WHERE email = ?
-                OR username = ?`,
+            `SELECT id FROM users WHERE email = ? OR username = ?`,
             [email, username]
         );
         if (existingUser) {
@@ -44,34 +47,41 @@ router.post('/register', async (req, res) => {
                 error: 'Email or username already exists'
             });
         }
-        // Hash password (10 rounds is standard)
+        // Hash password
         const passwordHash = await bcrypt.hash(password, 10);
-        // Insert user
+        // Insert user (unverified by default)
         const result = await runQuery(
-            `INSERT INTO users (email, username, password_hash)
-             VALUES (?, ?, ?)`,
+            `INSERT INTO users (email, username, password_hash, email_verified)
+             VALUES (?, ?, ?, 0)`,
             [email, username, passwordHash]
         );
+        // Generate verification token
+        const verificationToken = await createEmailVerificationToken(result.id);
+        // Send verification email (async, don't wait)
+        emailService.sendVerificationEmail(email, username, verificationToken)
+            .catch(err => console.error('Failed to send verification email:', err));
         // Create user object
         const user = {
             id: result.id,
             email,
-            username
+            username,
+            email_verified: false  // NEW: Include verification status
         };
         // Generate tokens
         const accessToken = generateAccessToken(user);
-        const refreshData = await generateRefreshToken(user,false);
-        // Set refresh token as httpOnly cookie (secure in production)
+        const refreshData = await generateRefreshToken(user, false);
+        // Set refresh token cookie
         res.cookie('refreshToken', refreshData.token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+            maxAge: 7 * 24 * 60 * 60 * 1000
         });
         res.status(201).json({
-            message: 'User created successfully',
+            message: 'User created successfully. Please check your email to verify your account.',
             accessToken,
-            user
+            user,
+            requiresVerification: true  // NEW: Flag for frontend
         });
     } catch (error) {
         console.error('Registration error:', error);
@@ -473,6 +483,148 @@ router.post('/reset-password', async (req, res) => {
         console.error('Reset password error:', error);
         res.status(500).json({
             error: 'Failed to reset password'
+        });
+    }
+});
+
+/**
+ * POST /auth/verify-email
+ * Verify email with token from email link
+ */
+router.post('/verify-email', async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!token) {
+            return res.status(400).json({
+                error: 'Verification token required'
+            });
+        }
+        // Verify the token and mark email as verified
+        const verification = await verifyEmailToken(token);
+        // Log verification for audit
+        await runQuery(
+            `INSERT INTO verification_attempts (user_id, attempt_type, ip_address)
+             VALUES (?, 'verify', ?)`,
+            [verification.user_id, req.ip]
+        );
+        console.log("email verified for user:", verification.user_id);
+        // After successful verification
+        await runQuery(
+            `UPDATE users SET email_verified = 1, verified_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [verification.user_id]
+        );
+        res.json({
+            message: 'Email verified successfully! You can now access all features.',
+            email: verification.email,
+            username: verification.username
+        });
+    } catch (error) {
+        console.error('Verification error:', error);
+        res.status(400).json({
+            error: error.message || 'Invalid or expired verification token'
+        });
+    }
+});
+/**
+ * POST /auth/resend-verification
+ * Resend verification email (rate limited)
+ */
+router.post('/resend-verification', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        // Check if already verified
+        const user = await getQuery(
+            `SELECT email, username, email_verified FROM users WHERE id = ?`,
+            [userId]
+        );
+        if (!user) {
+            return res.status(404).json({
+                error: 'User not found'
+            });
+        }
+        if (user.email_verified) {
+            return res.status(400).json({
+                error: 'Email already verified'
+            });
+        }
+        // Rate limiting: Check recent attempts
+        const recentAttempts = await getQuery(
+            `SELECT COUNT(*) as count
+             FROM verification_attempts
+             WHERE user_id = ?
+               AND attempt_type = 'send'
+               AND created_at > datetime('now', '-1 hour')`,
+            [userId]
+        );
+        if (recentAttempts.count >= 3) {
+            return res.status(429).json({
+                error: 'Too many requests. Please try again in 1 hour.'
+            });
+        }
+        // Generate new verification token
+        const verificationToken = await createEmailVerificationToken(userId);
+        // Log attempt
+        await runQuery(
+            `INSERT INTO verification_attempts (user_id, attempt_type, ip_address)
+             VALUES (?, 'send', ?)`,
+            [userId, req.ip]
+        );
+        // Send email
+        const emailResult = await emailService.sendVerificationEmail(
+            user.email,
+            user.username,
+            verificationToken
+        );
+        res.json({
+            message: 'Verification email sent successfully',
+            demo_url: emailResult.verificationUrl  // Only for demo
+        });
+    } catch (error) {
+        console.error('Resend verification error:', error);
+        res.status(500).json({
+            error: 'Failed to resend verification email'
+        });
+    }
+});
+/**
+ * GET /auth/verification-status
+ * Check user's verification status
+ */
+router.get('/verification-status', authenticateToken, async (req, res) => {
+    try {
+        const user = await getQuery(
+            `SELECT email_verified, verified_at FROM users WHERE id = ?`,
+            [req.user.id]
+        );
+        res.json({
+            verified: !!user.email_verified,
+            verifiedAt: user.verified_at
+        });
+    } catch (error) {
+        console.error('Verification status error:', error);
+        res.status(500).json({
+            error: 'Failed to check verification status'
+        });
+    }
+});
+
+router.get('/me', authenticateToken, async (req, res) => {
+    try {
+        const user = await getQuery(
+            `SELECT id, email, username, created_at, email_verified, verified_at
+             FROM users WHERE id = ?`,
+            [req.user.id]
+        );
+        if (!user) {
+            return res.status(404).json({
+                error: 'User not found'
+            });
+        }
+        res.json(user);
+    } catch (error) {
+        console.error('Get user error:', error);
+        res.status(500).json({
+            error: 'Failed to get user info'
         });
     }
 });

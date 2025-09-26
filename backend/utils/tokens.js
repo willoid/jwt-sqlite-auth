@@ -122,11 +122,74 @@ async function cleanupExpiredTokens() {
          WHERE blacklisted_at < datetime('now', '-7 days')`
     );
 }
+/**
+ * Generate email verification token
+ * Uses crypto for secure random token generation
+ */
+function generateVerificationToken() {
+    // Generate 32-byte random token, convert to hex string
+    // This gives us a 64-character token
+    const crypto = require('crypto');
+    return crypto.randomBytes(32).toString('hex');
+}
+/**
+ * Create and store email verification token
+ * Tokens expire in 24 hours (industry standard)
+ */
+async function createEmailVerificationToken(userId) {
+    const token = generateVerificationToken();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    // Remove any existing tokens for this user
+    await runQuery(
+        `DELETE FROM email_verifications WHERE user_id = ?`,
+        [userId]
+    );
+    // Insert new token
+    await runQuery(
+        `INSERT INTO email_verifications (user_id, token, expires_at)
+         VALUES (?, ?, ?)`,
+        [userId, token, expiresAt.toISOString()]
+    );
+    return token;
+}
+/**
+ * Verify email verification token
+ * Checks validity and expiry
+ */
+async function verifyEmailToken(token) {
+    const verification = await getQuery(
+        `SELECT ev.*, u.email, u.username
+         FROM email_verifications ev
+         JOIN users u ON ev.user_id = u.id
+         WHERE ev.token = ? AND ev.expires_at > datetime('now')`,
+        [token]
+    );
+    if (!verification) {
+        throw new Error('Invalid or expired verification token');
+    }
+    // Mark user as verified
+    await runQuery(
+        `UPDATE users
+         SET email_verified = 1, verified_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [verification.user_id]
+    );
+    // Delete used token
+    await runQuery(
+        `DELETE FROM email_verifications WHERE token = ?`,
+        [token]
+    );
+    return verification;
+}
+
 module.exports = {
     generateAccessToken,
     generateRefreshToken,
     verifyAccessToken,
     verifyRefreshToken,
     revokeRefreshToken,
-    cleanupExpiredTokens
+    cleanupExpiredTokens,
+    generateVerificationToken,
+    createEmailVerificationToken,
+    verifyEmailToken
 };

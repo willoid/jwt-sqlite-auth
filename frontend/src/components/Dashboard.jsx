@@ -58,22 +58,58 @@ function Dashboard({ user, onLogout }) {
                             <span>{userInfo.username}</span>
                         </div>
                         <div className="info-item">
+                            <label>Email Status:</label>
+                            <span className={userInfo.email_verified ? 'verified' : 'unverified'}>
+                                {userInfo.email_verified ? '✅ Verified' : '⚠️ Unverified'}
+                            </span>
+                        </div>
+                        {userInfo.verified_at && (
+                            <div className="info-item">
+                                <label>Verified At:</label>
+                                <span>{new Date(userInfo.verified_at).toLocaleDateString()}</span>
+                            </div>
+                        )}
+                        <div className="info-item">
                             <label>Account Created:</label>
                             <span>{new Date(userInfo.created_at).toLocaleDateString()}</span>
                         </div>
                     </div>
                 </div>
             )}
-            <div className="token-info">
-                <h3>🔐 Authentication Status</h3>
-                <p className="success">✅ Access Token: Active (15 min expiry)</p>
-                <p className="success">✅ Refresh Token: Stored in httpOnly cookie (7 days)</p>
-                <p className="info">Tokens auto-refresh when expired</p>
-            </div>
-            <div className="protected-content">
-                <h3>Protected Content</h3>
-                <p>This content is only visible to authenticated users.</p>
-                <p>Your JWT tokens are handling the authentication!</p>
+            {/* Feature Gating Example */}
+            <div className="features-section">
+                <h3>Available Features</h3>
+                {userInfo?.email_verified ? (
+                    <div className="feature-grid">
+                        <div className="feature-card available">
+                            <h4>✅ Create Projects</h4>
+                            <p>Full access granted</p>
+                        </div>
+                        <div className="feature-card available">
+                            <h4>✅ Team Collaboration</h4>
+                            <p>Invite team members</p>
+                        </div>
+                        <div className="feature-card available">
+                            <h4>✅ API Access</h4>
+                            <p>Generate API keys</p>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="feature-grid">
+                        <div className="feature-card locked">
+                            <h4>🔒 Create Projects</h4>
+                            <p>Requires email verification</p>
+                        </div>
+                        <div className="feature-card locked">
+                            <h4>🔒 Team Collaboration</h4>
+                            <p>Requires email verification</p>
+                        </div>
+                        <div className="feature-card locked">
+                            <h4>🔒 API Access</h4>
+                            <p>Requires email verification</p>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
