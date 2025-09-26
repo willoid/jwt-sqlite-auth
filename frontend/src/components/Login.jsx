@@ -2,14 +2,11 @@ import { useState } from 'react';
 import { login } from '../api/auth';
 import ForgotPassword from './ForgotPassword';
 
-
-
-
 function Login({ onSuccess }) {
-    const [rememberMe, setRememberMe] = useState(false);
     const [formData, setFormData] = useState({
         email: '',
-        password: ''
+        password: '',
+        rememberMe: false
     });
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -75,8 +72,10 @@ function Login({ onSuccess }) {
                     <input
                         type="checkbox"
                         id="rememberMe"
-                        checked={rememberMe}
-                        onChange={(e) => setRememberMe(e.target.checked)}
+                        checked={formData.rememberMe}
+                        onChange={(e) =>
+                            setFormData({ ...formData, rememberMe: e.target.checked })
+                        }
                         style={{width:"auto"}}
                     />
                     <label htmlFor="rememberMe" style={{marginBottom:0, cursor:"pointer"}}>Remember Me for 30 days</label>
