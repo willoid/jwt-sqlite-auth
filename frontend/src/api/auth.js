@@ -12,6 +12,25 @@ const API_URL = 'http://localhost:3001';
 // Store access token in memory (not localStorage for security)
 let accessToken = null;
 
+// Add a flag to prevent multiple simultaneous refresh attempts
+let isRefreshing = false;
+let refreshSubscribers = [];
+
+/**
+ * Subscribe to token refresh
+ */
+function subscribeTokenRefresh(cb) {
+    refreshSubscribers.push(cb);
+}
+
+/**
+ * Notify all subscribers when token is refreshed
+ */
+function onTokenRefreshed(token) {
+    refreshSubscribers.forEach(cb => cb(token));
+    refreshSubscribers = [];
+}
+
 /**
  * Set authorization header for all requests
  */
@@ -86,7 +105,9 @@ export async function refreshToken() {
  */
 export async function logout() {
     try {
-        await axios.post(`${API_URL}/auth/logout`);
+        await axios.post(`${API_URL}/auth/logout`, {}, {
+            withCredentials: true
+        });
         // Clear access token
         setAuthHeader(null);
         return {message: 'Logout successful'};
@@ -110,47 +131,99 @@ export async function getCurrentUser() {
 }
 
 /**
- * Setup axios interceptor to refresh token on 401
+ * Setup axios interceptor to refresh token on 401 or 403
+ * This handles token expiration gracefully
  */
 axios.interceptors.response.use(
     (response) => response,
     async (error) => {
         const originalRequest = error.config;
 
-        // CRITICAL FIX: Don't retry if this is already a refresh request
-        if (originalRequest.url && originalRequest.url.includes('/auth/refresh')) {
+        // Don't retry refresh requests or if we've already retried
+        if (originalRequest.url?.includes('/auth/refresh') || originalRequest._retry) {
             return Promise.reject(error);
         }
 
-        // If 401 and haven't already tried to refresh
-        if (error.response?.status === 401 && !originalRequest._retry) {
+        // If 401 or 403 error (unauthorized/forbidden - token expired)
+        if (error.response?.status === 401 || error.response?.status === 403) {
+            // Check if the error message indicates token issue
+            const errorMessage = error.response?.data?.error?.toLowerCase() || '';
+            const isTokenError = errorMessage.includes('token') ||
+                errorMessage.includes('expired') ||
+                errorMessage.includes('invalid');
+
+            if (!isTokenError) {
+                // Not a token error, don't try to refresh
+                return Promise.reject(error);
+            }
+
+            // If we're already refreshing, queue this request
+            if (isRefreshing) {
+                return new Promise((resolve, reject) => {
+                    subscribeTokenRefresh((token) => {
+                        // Retry original request with new token
+                        originalRequest.headers['Authorization'] = `Bearer ${token}`;
+                        resolve(axios(originalRequest));
+                    });
+                });
+            }
+
             originalRequest._retry = true;
+            isRefreshing = true;
+
             try {
-                await refreshToken();
+                const response = await refreshToken();
+                const newToken = response.accessToken;
+
+                // Notify all queued requests about the new token
+                onTokenRefreshed(newToken);
+
                 // Retry original request with new token
+                originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
+
+                isRefreshing = false;
                 return axios(originalRequest);
             } catch (refreshError) {
-                // Refresh failed, redirect to login
-                window.location.href = '/login';
+                isRefreshing = false;
+
+                // Only redirect to login if it's not a background refresh
+                if (!originalRequest.silent) {
+                    // Clear local auth state
+                    setAuthHeader(null);
+                    // Refresh failed, redirect to login
+                    window.location.href = '/';
+                }
                 return Promise.reject(refreshError);
             }
         }
+
         return Promise.reject(error);
     }
 );
+
+/**
+ * Get current user with silent option
+ */
+export async function getCurrentUserSilent() {
+    try {
+        const response = await axios.get(`${API_URL}/auth/me`, {
+            silent: true // Mark as silent request
+        });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || {error: 'Failed to get user info'};
+    }
+}
 
 /**
  * Force refresh user data
  */
 export async function forceRefreshUser() {
     try {
-        // Clear any cached token
-        accessToken = null;
+        // Get fresh token first
+        await refreshToken();
 
-        // Get fresh token
-        const refreshResponse = await refreshToken();
-
-        // Get fresh user data
+        // Then get fresh user data
         const userResponse = await getCurrentUser();
 
         return userResponse;
@@ -158,6 +231,5 @@ export async function forceRefreshUser() {
         throw error;
     }
 }
-
 
 export {accessToken};

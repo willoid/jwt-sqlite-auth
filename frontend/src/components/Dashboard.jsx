@@ -1,37 +1,85 @@
-import { useState, useEffect } from 'react';
-import { getCurrentUser, logout } from '../api/auth';
+import { useState, useEffect, useRef } from 'react';
+import { getCurrentUser, getCurrentUserSilent, logout, forceRefreshUser } from '../api/auth';
 import VerificationBanner from './VerificationBanner';
 
-function Dashboard({ user, onLogout }) {
-    const [userInfo, setUserInfo] = useState(null);
+function Dashboard({ user, onLogout, onUserUpdate }) {
+    const [userInfo, setUserInfo] = useState(user); // Initialize with passed user
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [refreshing, setRefreshing] = useState(false);
+    const intervalRef = useRef(null);
+    const mountedRef = useRef(true);
 
     useEffect(() => {
+        mountedRef.current = true;
         fetchUserInfo();
+
         // Set up auto-refresh every 30 seconds
-        const interval = setInterval(fetchUserInfo, 30000);
-        return () => clearInterval(interval);
+        intervalRef.current = setInterval(() => {
+            if (mountedRef.current) {
+                fetchUserInfoSilent();
+            }
+        }, 30000);
+
+        // Cleanup on unmount
+        return () => {
+            mountedRef.current = false;
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+            }
+        };
     }, []);
 
     const fetchUserInfo = async () => {
         try {
+            setLoading(true);
             const data = await getCurrentUser();
-            console.log('Fetched user data:', data); // Debug log
-            setUserInfo(data);
-            setError('');
+
+            if (mountedRef.current) {
+                console.log('Fetched user data:', data);
+                setUserInfo(data);
+                setError('');
+
+                // Update parent component's user state
+                if (onUserUpdate) {
+                    onUserUpdate(data);
+                }
+            }
         } catch (err) {
             console.error('Error fetching user:', err);
-            setError('Failed to load user info');
+            if (mountedRef.current) {
+                setError('Failed to load user info');
+            }
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            if (mountedRef.current) {
+                setLoading(false);
+                setRefreshing(false);
+            }
+        }
+    };
+
+    const fetchUserInfoSilent = async () => {
+        try {
+            const data = await getCurrentUserSilent();
+
+            if (mountedRef.current) {
+                console.log('Silent refresh - user data:', data);
+                setUserInfo(data);
+
+                // Update parent component's user state
+                if (onUserUpdate) {
+                    onUserUpdate(data);
+                }
+            }
+        } catch (err) {
+            // Silent refresh failed - don't show error to user
+            console.log('Silent refresh failed, will retry on next interval');
         }
     };
 
     const handleRefresh = async () => {
         setRefreshing(true);
+        setError('');
         await fetchUserInfo();
     };
 
@@ -41,6 +89,7 @@ function Dashboard({ user, onLogout }) {
             onLogout();
         } catch (err) {
             console.error('Logout error:', err);
+            // Even if logout fails on server, clear local session
             onLogout();
         }
     };
@@ -49,8 +98,8 @@ function Dashboard({ user, onLogout }) {
         return <div className="loading">Loading user data...</div>;
     }
 
-    // Use userInfo for display, not the passed user prop
-    const displayUser = userInfo || user;
+    // Use userInfo for display
+    const displayUser = userInfo;
     const isVerified = displayUser?.email_verified === true || displayUser?.email_verified === 1;
 
     return (
@@ -80,18 +129,7 @@ function Dashboard({ user, onLogout }) {
                 <>
                     {/* Show verification banner if not verified */}
                     {!isVerified && (
-                        <div className="verification-banner" style={{ marginBottom: '1.5rem' }}>
-                            <div className="banner-content">
-                                <div className="banner-icon">⚠️</div>
-                                <div className="banner-text">
-                                    <strong>Email Verification Required</strong>
-                                    <p>Please check your email for the verification link.</p>
-                                    <p style={{ fontSize: '0.9rem', marginTop: '0.5rem', color: '#666' }}>
-                                        Already verified? Click the refresh button above.
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
+                        <VerificationBanner user={displayUser} />
                     )}
 
                     <div className="user-info">
@@ -124,6 +162,10 @@ function Dashboard({ user, onLogout }) {
                             <div className="info-item">
                                 <label>Account Created:</label>
                                 <span>{new Date(displayUser.created_at).toLocaleString()}</span>
+                            </div>
+                            <div className="info-item">
+                                <label>Last Updated:</label>
+                                <span>{new Date().toLocaleTimeString()}</span>
                             </div>
                         </div>
                     </div>
@@ -162,23 +204,6 @@ function Dashboard({ user, onLogout }) {
                                 </div>
                             </div>
                         )}
-                    </div>
-
-                    {/* Debug info - remove in production */}
-                    <div style={{
-                        marginTop: '2rem',
-                        padding: '1rem',
-                        background: '#1e293b',
-                        borderRadius: '8px',
-                        fontSize: '0.875rem',
-                        fontFamily: 'monospace'
-                    }}>
-                        <strong>Debug Info:</strong>
-                        <pre>{JSON.stringify({
-                            email_verified: displayUser.email_verified,
-                            type: typeof displayUser.email_verified,
-                            isVerified: isVerified
-                        }, null, 2)}</pre>
                     </div>
                 </>
             )}
