@@ -231,104 +231,66 @@ router.post('/logout', authenticateRefreshToken, async (req, res) => {
 
 /**
  * POST /auth/forgot-password
- * Generates a secure reset code for the user
  *
- * Security considerations:
- * - Never reveal if email exists (prevents user enumeration)
- * - Hash the code before storing (defense in depth)
- * - 15-minute expiry (OWASP recommendation)
- *
- * In production: Would send code via email/SMS
- * For demo: Returns code in response
  */
+// Update backend/routes/auth.js - forgot-password route
 router.post('/forgot-password', async (req, res) => {
     try {
         const {email} = req.body;
 
-// Input validation
         if (!email) {
             return res.status(400).json({
                 error: 'Email required'
             });
         }
 
-// Check if email format is valid (basic check)
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            return res.status(400).json({
-                error: 'Invalid email format'
-            });
-        }
-
-// Find user - but don't reveal if they exist
         const user = await getQuery(
-            `SELECT id, username
-             FROM users
-             WHERE email = ?`,
+            `SELECT id, username FROM users WHERE email = ?`,
             [email]
         );
 
         if (!user) {
-// SECURITY: Same response whether user exists or not
-// This prevents attackers from discovering valid emails
+            // Don't reveal if user exists
             return res.json({
                 message: 'If email exists, reset code will be sent',
                 success: true
             });
         }
 
-// Check for recent reset attempts (rate limiting)
-        const recentAttempt = await getQuery(
-            `SELECT COUNT(*) as count
-             FROM password_resets
-             WHERE user_id = ? AND created_at > datetime('now', '-5 minutes')`,
-            [user.id]
-        );
-
-        if (recentAttempt.count > 2) {
-// Rate limit: max 3 attempts per 5 minutes
+        // Check rate limiting
+        if (!emailService.canSendEmail(email, 'password-reset')) {
             return res.status(429).json({
-                error: 'Too many reset attempts. Try again in 5 minutes.'
+                error: 'Too many reset attempts. Try again later.'
             });
         }
 
-// Generate cryptographically secure 6-digit code// Math.random() is fine for demo, use crypto.randomInt() in production
+        // Generate code
         const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-// Hash the code with BCrypt (same as passwords)// This ensures even database access doesn't reveal codes
         const hashedCode = await bcrypt.hash(resetCode, 10);
-
-// Set expiry to 15 minutes from now
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
-// Invalidate any existing unused codes for this user
+        // Store in database
         await runQuery(
-            `UPDATE password_resets
-             SET used = 1
-             WHERE user_id = ?
-               AND used = 0`,
+            `UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0`,
             [user.id]
         );
 
-// Store the new reset code
         await runQuery(
             `INSERT INTO password_resets (user_id, reset_code, expires_at)
              VALUES (?, ?, ?)`,
             [user.id, hashedCode, expiresAt.toISOString()]
         );
 
-// Log for audit trail
-        console.log(`Password reset requested for user ${user.id} at ${new Date().toISOString()}`);
+        // Send email via SendGrid
+        await emailService.sendPasswordResetEmail(email, user.username, resetCode);
 
-// DEMO ONLY: Return code directly// PRODUCTION: Send via email/SMS and never return in API
         res.json({
-            message: 'Reset code generated',
-            code: resetCode,// REMOVE THIS LINE IN PRODUCTION!expiresIn: '15 minutes',
-            demo_note: '⚠️ In production, this code would be emailed, not returned in API'
+            message: 'Reset code sent to your email',
+            success: true
         });
 
     } catch (error) {
-        console.error('Forgot password error:', error);
+        console.error('Password reset error:', error);
         res.status(500).json({
             error: 'Failed to process request'
         });
